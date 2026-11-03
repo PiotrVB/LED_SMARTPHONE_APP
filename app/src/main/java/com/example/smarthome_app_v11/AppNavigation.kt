@@ -1,77 +1,56 @@
 package com.example.smarthome_app_v11
 
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
+import androidx.lifecycle.createSavedStateHandle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.navigation.NavType
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
+import androidx.navigation.compose.*
 import androidx.navigation.navArgument
 
 @Composable
-fun AppNavigation(
-    deviceRepository: DeviceRepository,
-    ledRepository: LedRepository
-) {
-    val navController = rememberNavController()
-    val deviceViewModel = DeviceViewModel(deviceRepository)
-    val controlViewModel = ControlViewModel(deviceRepository, ledRepository)
-
-    NavHost(navController = navController, startDestination = Screen.Login.route) {
-        composable(Screen.Login.route) {
-            LoginScreen(
-                onLoginSuccess = {
-                    navController.navigate(Screen.Dashboard.route) {
-                        popUpTo(Screen.Login.route) { inclusive = true }
-                    }
-                },
-                onNavigateToRegister = { navController.navigate(Screen.Register.route) }
-            )
-        }
-
-        composable(Screen.Register.route) {
-            RegisterScreen(
-                onRegisterSuccess = {
-                    navController.navigate(Screen.Dashboard.route) {
-                        popUpTo(Screen.Register.route) { inclusive = true }
-                    }
-                },
-                onNavigateToLogin = { navController.popBackStack() }
-            )
-        }
-
-        // Okno 1
-        composable(Screen.Dashboard.route) {
-            DashboardScreen(
-                viewModel = deviceViewModel,
-                onNavigateToControl = { id -> navController.navigate(Screen.ControlPanel.createRoute(id)) },
-                onNavigateToAdd = { navController.navigate(Screen.AddDevice.route) },
-                onNavigateToDelete = { navController.navigate(Screen.DeleteDevice.route) }
-            )
-        }
-
-        // Okno 2
-        composable(Screen.AddDevice.route) {
-            AddDeviceScreen(
-                viewModel = deviceViewModel,
-                onDeviceAdded = { navController.popBackStack() }
-            )
-        }
-
-        // Okno 3
-        composable(Screen.DeleteDevice.route) {
-            DeleteDeviceScreen(
-                viewModel = deviceViewModel,
-                onBack = { navController.popBackStack() }
-            )
-        }
-
-        // Sterowanie
-        composable(
-            route = Screen.ControlPanel.route,
-            arguments = listOf(navArgument("deviceId") { type = NavType.IntType })
-        ) { backStackEntry ->
-            val id = backStackEntry.arguments?.getInt("deviceId") ?: 0
-            ControlPanelScreen(deviceId = id, viewModel = controlViewModel)
+fun AppNavigation(app: SmartHomeApplication, authRepository: AuthRepository = app.auth,
+    repositoryFor: (Account) -> DeviceRepository = app::devicesFor) {
+    val auth: AuthViewModel = viewModel(factory = viewModelFactory { initializer { AuthViewModel(authRepository) } })
+    val account by auth.account.collectAsState()
+    key(account?.id) {
+        val nav = rememberNavController()
+        if (account == null) {
+            NavHost(nav, startDestination = "login") {
+                composable("login") { AuthScreen(false, auth) { auth.error.value = null; nav.navigate("register") } }
+                composable("register") { AuthScreen(true, auth) { auth.error.value = null; nav.popBackStack() } }
+            }
+        } else {
+            val deviceRepository = remember(account!!.id) { repositoryFor(account!!) }
+            NavHost(nav, startDestination = "dashboard") {
+                composable("dashboard") {
+                    val vm: DeviceViewModel = viewModel(factory = viewModelFactory { initializer { DeviceViewModel(deviceRepository) } })
+                    DashboardScreen(vm, { nav.navigate("control/$it") }, { nav.navigate("add") },
+                        { nav.navigate("delete") }, { nav.navigate("edit/$it") }, auth::logout, account!!.email)
+                }
+                composable("delete") {
+                    val vm: DeviceViewModel = viewModel(factory = viewModelFactory { initializer { DeviceViewModel(deviceRepository) } })
+                    DeleteDeviceScreen(vm) { nav.popBackStack() }
+                }
+                composable("add") {
+                    val vm: DeviceEditorViewModel = viewModel(factory = viewModelFactory { initializer { DeviceEditorViewModel(deviceRepository, createSavedStateHandle()) } })
+                    AddDeviceScreen(vm, false) { nav.popBackStack() }
+                }
+                composable("edit/{deviceId}", arguments = listOf(navArgument("deviceId") { type = NavType.IntType })) {
+                    val vm: DeviceEditorViewModel = viewModel(factory = viewModelFactory { initializer { DeviceEditorViewModel(deviceRepository, createSavedStateHandle()) } })
+                    AddDeviceScreen(vm, true) { nav.popBackStack() }
+                }
+                composable("control/{deviceId}", arguments = listOf(navArgument("deviceId") { type = NavType.IntType })) {
+                    val vm: ControlViewModel = viewModel(factory = viewModelFactory { initializer { ControlViewModel(deviceRepository, app.led, createSavedStateHandle()) } })
+                    ControlPanelScreen(vm) { nav.popBackStack() }
+                }
+            }
         }
     }
 }
+
+
+
+
+
